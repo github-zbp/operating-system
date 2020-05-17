@@ -1,0 +1,224 @@
+1.多进程之间不共享数据
+
+例子：
+from multiprocessing import Process
+
+num=10
+def task1:
+    global num
+    num+=5
+    print("子进程1的num：%d" % num)
+    
+def task2:
+    global num
+    num+=10
+    print("子进程2的num：%d" % num)
+    
+p1 = Process(target=task1)
+p2 = Process(target=task2)
+p1.start()
+p2.start()
+p1.join()
+p2.join()
+print("主进程的num：%d" % num)
+
+结果得到：
+子进程1的num：15
+子进程2的num：20
+主进程的num：10
+
+从这里可以知道三个进程之间的num是不共享的。
+如果是共享的得到应该是 15 25 25
+
+原因详细分析：
+因为主进程创建一个子进程，底层会执行fork()，系统会将主进程完全拷贝一份放在另一个空间，包括拷贝主进程的PCB，内存数据等。
+所以上面的程序中生成了2个子进程，就会开辟两块空间，并将主进程的内容复制两份分别放在两个空间中。加上主进程自己，就有三块空间。
+三块空间里面各有一个num，这三个num变量互不干扰。所以每个进程自己操作自己的num，不会影响其他两个进程的num
+
+
+2.可以使用线程进程安全的队列做进程间的通信
+
+from multiprocessing import Queue
+# 或者 from queue import Queue
+
+# 创建一个队列 
+q = Queue(5)    # 指定长度为5的队列。默认长度为无限
+
+for i in range(6):
+    try:
+        q.put(i,block=True,timeout=1)    # 往队列尾部添加元素，如果队列已满，则会阻塞等待队列有空位为止;block=True是默认值，timeout=1 表示只等待1秒，超过一秒没有空位就报错。默认为timeout=0
+    
+# 判断队列是否已满
+print(q.full())
+
+# 判断队列是否为空
+print(q.empty())
+
+for i in range(q.qsize()):  # 获取队列大小
+    q.get()     # 从头部弹出元素；也有block和timeout参数，为空时也会阻塞
+    
+    
+    
+
+使用队列实现进程间通信
+from multiprocessing import Queue,Process
+from time import sleep
+
+# 生产者
+def write(q):
+    for i in range(10):
+        q.put(i)
+        print("插入 %d" % i)
+        sleep(0.5)      # 生产者限制生产速度，消费者不限制消费速度，但是消费者获取不到产品时会自动阻塞
+        
+# 消费者
+def read(q):
+    while True:     # 消费者不停的获取产品消费,如果产品为空则阻塞
+        print("弹出 %d" % q.get())
+        
+if __name__=="__main__":
+    q = Queue()          # 队列没有长度限制
+    p1 = Process(target=write,args=(q,))   
+    p2 = Process(target=read,args=(q,))   
+    p1.start()
+    p2.start()
+    p1.join()
+    p2.join()
+    
+    
+    
+
+3.使用threading模块创建线程
+python线程任务可以以函数形式或者类的形式呈现
+
+如果是通过类的方式创建一个线程，这个类需要继承Thread类，并且重新父类的run方法。
+在外部，实例化这个类，对象直接调用start()就可以运行这个线程的run()方法
+
+例如：
+from threading import Thread
+
+class MyThread(Thread):
+    def __init__(self,num):
+        self.num = num
+        super(MyThread,self).__init__()
+        
+    # 重写run方法
+    def run():
+        # 做一些任务
+        for i in range(self.num):
+            print(i)
+        
+if __name__=="__main__":
+    t1 = MyThread(1000000)  # 输出10万
+    t2 = MyThread(2000000)  # 输出20万
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    
+    
+上面的MyThread只能完成一种类型的特定任务。
+如果MyThread想要完成各式各样的任务可以这样写：
+
+class MyThread(Thread):
+    def __init__(self,func,name,args=tuple()):
+        super(MyThread,self).__init__(target=func,name=name,args=args)
+        
+    def run(self):
+        self._target(*self._args)   #_target和_args是线程类的私有变量，里面存着任务函数和任务函数的参数
+        
+需要创建所有你想执行的函数。
+为每一个函数创建一个MyThread类。例如
+
+import Mythread 
+
+def func1(x1,x2):
+    ...
+    
+def func2(*args):
+    ...
+    
+def func3():
+    ...
+    
+t1 = MyThread(target=func1,name="t1",args=(1,2))
+t2 = MyThread(target=func2,name="t2",args=(1,2,3))
+t3 = MyThread(target=func3,name="t1")
+t1.start()
+t2.start()
+t3.start()
+t1.join()
+t2.join()
+t3.join()
+
+
+4.线程是共享全局变量的（共享进程中的所有数据和所有资源）
+例如：
+
+from threading import Thread 
+
+num=10 
+
+def task1():
+    global num
+    for i in range(10):
+        num+=1 
+    print("num为：%d" % num)
+
+def task2():
+    global num
+    print("num为：%d" % num)
+    
+if __name__=="__main__":
+    t1 = Thread(target=task1)
+    t2 = Thread(target=task2)
+    
+    # 为了让task2的输出在最后，所以先让task1先执行，等task1执行完后，再开始task2的任务执行,因为这个脚本不是为了高效运行程序，而是为了验证多线程是共享全局变量的
+    t1.start()
+    t1.join()   # 等待t1执行完才执行t2
+    
+    t2.start()
+    t2.join()
+    
+    #t1输出20，t2也输出20，说明线程共享同一进程中的数据
+    
+    
+线程共享全局变量，所以可能会出现数据被多个线程修改导致的数据混乱问题。
+这就是所谓的线程非安全。
+
+5.为了解决线程非安全问题，所以要使用锁
+锁的具体使用详见“操作系统原理-线程和进程同步”
+
+6.生产者消费者模型
+生产者是生产数据的线程，消费者是消费数据的线程。
+如果二者处理数据的速度不一致，快的一方会等待慢的一方。
+为了解决这个问题，引入了生产者消费者模式。生产者消费者模式通过一个容器来解决这个问题，这个容器可以是一个栈或者队列。其原理是：生产者和消费者不直接通信，而是通过这个队列通信，生产者将数据放入队列，消费者不从生产者获取数据，而是从队列中获取数据
+
+7.ThreadLocal实现线程之间数据私有化（线程之间变量不共享）
+我们知道，多线程之间是共用进程的全局变量的。
+如果我们希望每个线程可以拥有属于自己独享的数据，可以使用ThreadLocal。生成一个local对象，local对象是全局的，将数据存到local对象的属性中，local对象保存的变量在每个线程中是独立的是私有的，互不干扰的。 
+
+from threading import Thread
+import threading
+
+local = threading.local()   # 创建ThreadLocal对象
+
+def add_num(num,times):
+    local.num = num
+    for i in range(times):
+        local.num+=1
+    print("线程名称：%s | 数字结果：%d" % (threading.current_thread().getName(),local.num))
+
+if __name__=="__main__":
+    threads=[]
+    for args in [(100,100000),(-100000,100000),(50000,50000)]:
+        threads.append(Thread(target=add_num,args=args))
+
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+
+上面的例子中，三个线程对local这个全局变量的num属性进行操作，每个线程对local.num的操作都不会影响其他local.num的值。每个线程的local.num是独立的。

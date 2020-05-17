@@ -1,0 +1,1803 @@
+1.线程同步之互斥量
+
+场景：当多个线程争抢一个临界资源(临界资源是可由多线程或多进程共享的)的时候，互斥量可以保证一个线程在使用这个临界资源的时候，其他线程不会使用这个资源。
+
+例如在生产者消费者模型中：
+两个线程都在修改一个内存里面的数据k，而且他们是并发的修改。
+
+此时生产者线程的操作是
+register = k    # 数据拷贝一份到寄存器
+register = register+1   # 寄存器内数据+1，这一步是在CPU中执行,得到的左边的register是放在寄存器暂存的
+k = register    # 将寄存器的数据覆盖到缓冲区
+
+而消费者线程的操作是对k减一:
+register = k   
+register = register-1   
+k = register
+
+我们知道线程在并发执行的时候是会被分配时间片的，一个线程执行一段时间片，就把CPU让出给另一个线程执行一段时间片。
+
+如果，生产者执行到
+register = k    
+register = register+1   # 时间片结束
+
+CPU让出给消费者线程执行
+register = k   
+register = register-1   
+k = register    # 时间片结束 
+
+CPU让出给生产者执行
+k = register
+
+假如k初始值为0，最后执行结果本应该还是0，但最终却是1 
+
+
+可以看出来，多线程中线程的指令交叉执行，如果交替执行的数据是同一个数据就会导致数据混乱(脏数据)。
+互斥量则可以保证操作指令的原子性，让针对某个资源的一系列操作不中断的执行完再让其他线程执行指令。
+
+
+互斥量是线程同步最简单的方法，又称为互斥锁(互斥量不是互斥锁,互斥量是指资源,互斥锁是指对互斥量所上的锁)。
+互斥锁是通过对资源加锁和释放锁来实现资源访问的串行和操作的原子性。
+当一个线程对资源加锁后，其他线程无法操作该资源；线程对资源解锁后，其他线程才可以拿到这把锁对该资源加锁并访问。
+通过加锁和释放锁可以保证资源访问是串行的（一个线程访问完再让下一个资源访问）。
+
+
+操作系统直接提供了互斥量的API，开发者可以通过这个API完成资源的加锁和解锁操作。
+这个api是pthread_mutex_t
+
+当然，加锁和解锁是有一定的性能损耗的，所以只论单线程,加锁执行起来会比不加锁慢。
+
+
+互斥锁的原理是通过保持指令执行的原子性和资源访问的串行来实现的(代码中加了锁的那部分代码,多线程是串行的;没加锁的那部分代码,多线程是并行的)。
+
+
+实例：
+
+// 定义一个互斥锁
+pthread_mutex_t mutex=PTHREAD_MUTEX_INITIALIZER     
+
+//临界资源
+int num = 0     
+
+//生产者任务
+void *producer(void*){
+    int times = 1000000000;
+    while(times--){
+        pthread_mutex_lock(&mutex);     # 上锁
+        num +=1;    
+        pthread_mutex_unlock(&mutex)    # 释放锁
+    }
+}
+
+//消费者任务
+void *comsumer(void*){
+    int times = 1000000000;
+    while(times--){
+        pthread_mutex_lock(&mutex);     # 上锁
+        num -=1;    
+        pthread_mutex_unlock(&mutex)    # 释放锁
+    }
+}
+
+int main(){
+    printf("Start main function")
+    pthread_t thread1,thread2;      # 声明两个线程
+    pthread_create(&thread1,NULL,&producer,NULL)    # 创建线程用来执行生产者任务
+    pthread_create(&thread2,NULL,&comsumer,NULL)    # 创建线程用来执行消费者任务
+    pthread_join(thread1,NULL);    # 等待线程任务执行
+    pthread_join(thread2,NULL);    # 等待线程任务执行
+    
+    printf("Finished:%d\n",num)
+    return 0;
+}
+
+上述代码中，在执行对num这个临界资源的修改时会上锁，此时一个线程对n修改，另一个线程就不会对n修改（n已被锁定）
+
+下面说说本人对互斥锁和上面这段程序的理解：
+在上面的多线程程序中，当一个线程上了锁后执行操作，while中的代码执行了一半还没有执行完锁内的逻辑时，时间片就已经用完，CPU交给另一个线程使用；另一个线程对数据的操作也是要上锁的，它尝试获取锁，但是由于之前那个线程没有解锁，所以这个线程也会睡眠等待，等待意味着他会让出CPU给之前的线程；之前的线程继续运行，运行到解锁，此时另一个线程能够上锁并从上一次进入等待状态的那行代码继续运行
+
+PS：上锁的时候，只锁数据，不要锁住方法或者条件判断；锁数据的时候，尽量只锁住共享数据，不要锁住其他线程独立的数据。上锁的时候，锁住的代码越少，效率就越高，执行的越快。因为上了锁的那部分代码相当于是多线程串行,所以锁住的代码越多,串行的部分就越多,效率就不高
+
+只锁住共享数据不锁独立的数据意思指：
+假如有A和B两个线程，有a,b,c三个数据。
+A要做的是while循环让a++,c++
+B要做的是while循环让b--,c--
+此时A和B共享的数据是c，所以只需对c--和c++这两行代码加锁，A,B无需对a和b这两个变量加锁。否则如果A对a++和c++这两行代码都上锁了。A对a修改的时候，B就无法对b或c作出修改（B这个时候是可以对b或者c变量修改的）
+
+用代码表示就是：
+# A线程 错误示范
+while(times--){
+    pthread_mutex_lock(&mutex);     # 上锁
+    a++; 
+    c++;
+    pthread_mutex_unlock(&mutex)    # 释放锁
+
+# A线程 正确示范
+while(times--){
+    pthread_mutex_lock(&mutex);     # 上锁
+    c++;
+    pthread_mutex_unlock(&mutex)    # 释放锁
+    a++; 
+    
+B线程也一样，只对b++上锁，不要对c++上锁 
+
+
+只锁数据，不锁锁住方法或者条件判断的意思是不要调用一个函数时不要锁住整个函数调用，而是锁函数中部分真正需要锁住的操作。不要先上锁再做判断，而是先做判断，在判断里面上锁
+如：
+
+# 错误示范
+pthread_mutex_lock(&mutex);     # 上锁
+func();
+pthread_mutex_unlock(&mutex)
+
+# 错误示范 
+pthread_mutex_lock(&mutex);
+if(...){
+   ... 
+}
+pthread_mutex_unlock(&mutex)
+
+# 正确示范 
+if(...){
+   pthread_mutex_lock(&mutex);
+   ... 
+   pthread_mutex_unlock(&mutex);
+}
+
+在循环的时候，千万不要在循环外上锁，而是在数据做修改的时候上锁
+错误示范
+pthread_mutex_lock(&mutex);
+while(times--){
+    num+=1;
+}
+pthread_mutex_unlock(&mutex);
+
+正确示范 
+while(times--){
+    pthread_mutex_lock(&mutex);
+    num+=1;
+    pthread_mutex_unlock(&mutex);
+}
+
+如果将锁放在循环外，那么循环开始前加锁，要等到循环结束才能释放锁，这意味着其他线程在这个线程的循环结束前都拿不到锁，都要等待不能执行。如果这个循环很长，那么这个线程会占着CPU一直运行（即使该线程用完时间片让出CPU，其他线程被阻塞，照样主动让出CPU，把CPU拿回给原来这个做长循环的线程用），其他线程得不到运行，导致相当于变成单线程。
+
+PS2：如果两个线程都要操作一个数据n，为了线程安全所以加锁，此时必须两个线程都对操作数据n的代码加锁，不能一个线程加锁，另一个线程不加。这样线程A把n锁住了，线程B还是可以操作到n，因为B操作n不用加锁就能直接操作n
+还有，两个线程要加同一把锁才能保证数据的安全，不能A线程操作数据n的时候加锁lock1,B线程操作n的时候加锁lock2；因为 互斥锁之所以能够锁住数据就是由于多个线程共用一个锁的缘故。如果A用锁1锁住资源，B用的是锁2，不用获取锁1，B把锁2加到资源上，然后就可以直接操作n。
+所以，两个线程用两个不同的锁就和不用锁一样会造成数据混乱。
+上面的例子中，producer和consumer线程都是用的同一个锁 （变量mutex）
+
+
+2.线程同步之自旋锁
+
+自旋锁也是通过线程对临界资源加锁做到资源的串行访问。
+
+和互斥锁的区别:
+使用自旋锁的线程会反复检查锁是否可用；
+自旋锁不会让出CPU，是一种忙等待状态，意味着A线程对数据X加了锁后,线程B想操作X,于是要等待A线程释放锁,但是这个等待过程B线程不会让出CPU,而是一直运转CPU去判断A有没有释放锁,直到判断A释放了锁后B才获取到锁并开始对数据X操作.
+
+
+自旋锁避免了进程或线程的上下文切换的开销
+操作系统内部很多地方使用的是自旋锁
+自旋锁不适合在单核CPU的计算机中使用
+
+pthread_spinlock_t
+
+
+举个例子吧：
+还是生产者和消费者模型：
+
+假如一个进程中有3个线程
+
+生成者线程：A
+lock        # 加锁
+register = k   
+register = register+1   
+k = register
+unlock      # 解锁
+
+消费者线程：B
+lock        # 加锁
+register = k   
+register = register-1   
+k = register
+unlock      # 解锁
+
+第三个线程：C
+m++
+
+三个线程并发执行。
+
+如果这个锁是互斥锁：
+那么 A执行到register = register+1后，时间片用完，轮到B执行，但是原子性操作没有执行完所以A没有解锁，B无法获取锁于是休眠，休眠的时候会让出CPU。
+于是CPU轮到C执行，C是对资源m操作没有涉及到k，所以无需理会锁的问题，无需等待锁释放,直接操作变量m。
+C执行完轮到A将上一次的原子性操作执行完，A解锁，B得到通知被唤醒，B获取锁并执行指令
+
+互斥锁的问题在于：CPU让B休眠和把B唤醒都要有所损耗，要消耗一点点时间，切换次数多了损耗也会挺大。
+
+
+如果这个锁是自旋锁：
+A执行到register = register+1后，时间片用完，轮到B执行，但是原子性操作没有执行完所以A没有解锁，B无法获取锁，但是B不会休眠不让出CPU，而是一直执行获取锁的操作，这个操作是很消耗CPU的，可以理解为B不断尝试获取锁的过程是逻辑运算的过程（即死循环）。直到B的时间片结束，CPU会强制切给C线程，C执行完再给A执行。A完成原子性操作，解锁，轮到B执行，B就能够对操作加锁执行。
+
+上面是单核的结果，如果是多核，A,B并行而不是并发。那么资源被锁住，B在不断获取锁而且的时候，A也在执行,完成了原子性的操作，B就能获取到锁。
+
+所以可以看出，单核使用自旋锁是完全没意义的，因为在A没释放锁的情况下，B在自己的时间片内根本不可能获取到锁(因为A根本无法释放锁,A无法释放锁是因为A线程没有在执行,A没有在执行是因为只有一个CPU且CPU交给B在执行)，同时B还会大量消耗CPU。（使用top命令看到CPU占用100%）
+
+单核的计算机中使用自旋锁进行多线程同步的话,等同于使用单线程,而且比单线程还不如,因为处于等待的线程不干活却又大量消耗CPU资源
+
+
+自旋锁和互斥锁都是防止并发访问共享数据时可能导致的数据不一致问题。
+
+
+实例：
+
+// 定义一个自旋锁
+pthread_spinlock_t spin_lock;     
+
+//临界资源
+int num = 0     
+
+//生产者任务
+void *producer(void*){
+    int times = 1000000000;
+    while(times--){
+        pthread_spin_lock(&spin_lock);     # 上锁
+        num +=1;  
+        // sleep(10)    
+        pthread_spin_unlock(&spin_lock)    # 释放锁
+    }
+}
+
+//消费者任务
+void *comsumer(void*){
+    int times = 1000000000;
+    while(times--){
+        pthread_spin_lock(&spin_lock);     # 上锁
+        num -=1;    
+        pthread_spin_unlock(&spin_lock)    # 释放锁
+    }
+}
+
+int main(){
+    printf("Start main function")
+    pthread_t thread1,thread2;      # 声明两个线程
+    pthread_create(&thread1,NULL,&producer,NULL)    # 创建线程用来执行生产者任务
+    pthread_create(&thread2,NULL,&comsumer,NULL)    # 创建线程用来执行消费者任务
+    pthread_join(thread1,NULL);    # 等待线程任务执行
+    pthread_join(thread2,NULL);    # 等待线程任务执行
+    
+    printf("Finished:%d\n",num)
+    return 0;
+}
+
+为了查看自旋锁和互斥锁的区别，作者在 producer 函数中每次循环都 sleep(10)。这样producer线程每次循环都会睡10秒，而且sleep(10)是放在锁里面的，所以producer线程的每次循环都会被锁定10秒。消费者无法获取锁，于是在其时间片内不停的跑CPU去尝试获取锁。
+这个过程中CPU占用率达到100%
+
+而如果是使用互斥锁，消费者遇到锁未释放的情况，就会睡眠，让出CPU。
+
+所以自旋锁不适合用于存在比较多的等待或者阻塞的任务（如爬虫，磁盘IO读写等）和不适合单核的环境下使用，因为会大量消耗CPU，而且是无用的消耗。
+
+
+3.线程同步之读写锁
+
+是对自旋锁和互斥锁的改进。
+
+读写锁是一种特殊的自旋锁。读写锁的出现是考虑这样的场景，临界资源经常被读取，很少被修改。这样的话读取的时候就无须阻塞等待，读取可以并发或者并行。
+
+读写锁包括两种锁：读锁和写锁
+
+线程对临界资源读取的时候，需要我们对操作加读锁
+线程对临界资源修改的时候，需要我们对操作加写锁
+资源可以被添加多把读锁，只能被添加一把写锁
+
+线程对资源加读锁时，其他线程也可以对资源加读锁。所以线程对资源读取时，其他线程也可以对资源读取。
+线程对资源加读锁时，其他线程也不可以对资源加写锁。即读取时其他线程不能写。此时执行写的线程会自旋，不停的尝试获取锁。
+线程对资源加写锁时，其他线程也不可以对资源加读锁或写锁。即写时其他线程不能对资源写或者读。
+
+读读 yes 可并行或并发
+读写 no  只能串行
+写读 no  只能串行 
+写写 no  只能串行
+
+
+读写锁的适用场景是多读少写的任务场景。
+
+例如：
+有两个任务：一个是循环100000000次print(k),一个是循环100000000次k++
+
+为了模拟读多写少的场景,这里使用2个线程进行读,1个线程进行写
+用A,B两个线程执行任务一，每个线程都循环100000000次
+用C线程执行任务二
+
+同步方法1，使用读写锁：
+任务1加读锁
+任务2加写锁
+
+同步方法2，使用互斥锁：
+任务1加互斥锁
+任务2加互斥锁
+
+结果法1消耗时间远远小于法2
+
+
+实例： 
+
+// 定义一个读写锁
+pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;     
+
+//临界资源
+int num = 0     
+
+//读任务
+void *reader(void*){
+    int times = 1000000000;
+    while(times--){
+        pthread_rwlock_rdlock(&rwlock);     # 加读锁
+        printf("Number:%d\n",num)   
+        pthread_rwlock_unlock(&rwlock);    # 释放锁
+    }
+}
+
+//写任务
+void *writer(void*){
+    int times = 1000000000;
+    while(times--){
+        pthread_rwlock_wrlock(&rwlock);     # 加写锁
+        num -=1;    
+        pthread_rwlock_unlock(&rwlock)    # 释放锁
+    }
+}
+
+int main(){
+    printf("Start main function")
+    pthread_t thread1,thread2,thread3;      # 声明3个线程
+    pthread_create(&thread1,NULL,&reader,NULL)    
+    pthread_create(&thread2,NULL,&reader,NULL)   # 有两个线程都在读 
+    pthread_create(&thread3,NULL,&writer,NULL)    
+    pthread_join(thread1,NULL);    # 等待线程任务执行
+    pthread_join(thread2,NULL);    # 等待线程任务执行
+    pthread_join(thread3,NULL);    # 等待线程任务执行
+    
+    printf("Finished:%d\n",num)
+    return 0;
+}
+
+writer的循环内的代码执行时，reader循环内的代码会等待（而且是以CPU空转的方式等待，会消耗CPU），因为写锁锁定了资源n，无法给n上读锁
+线程1的reader执行时，线程2的reader，和线程3的writer可以执行，因为对资源加了读锁后，其他线程依然可以对其加读锁和写锁。当然如果是线程3比线程2先一步加了写锁，那么线程2就不能加读锁
+
+如果上面的例子将读写锁改为互斥锁，会发现执行时间长了很多，因为读取的时候也上了锁，其他线程无法读或者写，只能等待。
+
+
+4.线程同步之条件变量
+
+条件变量的原理是 允许线程睡眠直到满足某种条件另一个线程就会就向该线程发送信号，通知唤醒。
+
+条件变量要配合互斥量使用
+
+举个例子：
+有一个队列，里面放着要执行的任务
+当生产者生产的速度超过消费者消费的速度,队列中的任务会堆积。假设队列能容纳的任务个数是10000个。
+假设现在队列中的任务个数为n
+现在的需求是：当n>=10000时，让生产者线程停止生产进入休眠，当消费者线程消费掉队列中的任务使n<10000，消费者就会发送信号给生产者线程唤醒生产者继续生产；当队列元素==0时，让消费者停止消费进入休眠，然后生产者生产任务令n>0，并发送信号给消费者，唤醒它进行消费；
+
+这里面的条件变量就是 队列中现有的元素个数
+
+实例：
+
+int MAX_NUM=100;
+int num=0;
+
+// 定义条件变量
+pthread_cond_t cond=PTHREAD_COND_INITIALIZER; 
+
+// 定义一个互斥锁
+pthread_mutex_t mutex=PTHREAD_MUTEX_INITIALIZER
+
+void* producer(void*){
+    while(true){
+    
+        // A
+        pthread_mutex_lock(&mutex)  # 加互斥锁
+        
+        // Check1
+        while(num>MAX_NUM){  // 如果产品数量达到上限，就停止生产，进入等待
+        printf("产品满了，等待消费者消费")
+        
+        // B
+        pthread_cond_wait(&cond,&mutex);    // 等待并释放互斥锁；等待过程中，代码不再往下执行；当线程被唤醒是，该线程重新上互斥锁并往下执行
+ 
+        }
+        
+        // Do1
+        num+=1;         //生产者生产
+        
+        // C
+        pthread_cond_signal(&cond) //通知消费者有产品可以消费了
+        
+        // D
+        pthread_mutex_unlock(&mutex);   # 解锁
+    }
+}
+
+void* consumer(void*){
+    while(true){
+    
+        // E
+        pthread_mutex_lock(&mutex)  # 加互斥锁
+        
+        // Check2
+        while(num<=0){  // 如果产品为0，就停止消费，进入等待
+        printf("产品空了，等待生产者生产")
+        
+        // F 
+        pthread_cond_wait(&cond,&mutex);    // 等待并释放互斥锁；等待过程中，代码不再往下执行；当线程被唤醒是，该线程重新上互斥锁并往下执行
+
+        }
+        
+        // Do2
+        num-=1;         //消费者消费
+        
+        // G
+        pthread_cond_signal(&cond) //通知生产者说产品数量低于上限了可以继续生产了
+        
+        // H
+        pthread_mutex_unlock(&mutex);   # 解锁
+    }
+}
+
+详细流程：
+
+假设，只有一个生产者线程和一个消费者线程，两个线程并发。
+设定产品最大容量为100，当产品数量达到100时，产品停止生产，让消费者消费掉一些产品，使产品数量小于100时，生产者恢复生产。
+当产品数量达到0时，消费者停止消费，让生产者生产一些产品，使产品数量大于0时，消费者恢复消费。
+
+a.产品数量在 0~100 之间的情况下：
+
+当生产者进行生产按顺序会：
+执行A[先对资源上锁]
+执行Do1[生产产品]
+执行C[发送信号，但是没有实际作用，因为消费者并没有在等待信号]
+执行D[解锁]
+
+这个过程中，消费者无法对num修改。这个过程和仅用互斥锁的效果没有任何区别
+
+
+当消费者进行消费按顺序会：
+执行E[先对资源上锁]
+执行Do2[消费产品]
+执行G[发送信号，但是没有实际作用，因为生产者并没有在等待信号]
+执行H[解锁]
+
+这个过程中，生产者无法对num修改。这个过程和仅用互斥锁的效果没有任何区别
+
+
+情况a就是单纯的使用了互斥锁，没有用到条件变量
+
+
+b.产品数量达到100的情况下：
+
+当整体执行顺序为：
+
+生产者执行A[生产先对资源上锁]
+
+执行Check1[判断到产品达到上限]
+
+执行过程B[过程B的pthread_cond_wait()干这么几件事情：1.阻塞当前生产者线程，不让他执行后面的num+1的生产操作，此时生产者线程会休眠，让出CPU，休眠的过程其实是在等待信号，等待到信号就可以被唤醒；2.在生产者线程休眠之前释放互斥锁，让消费者可以消费掉一些产品，如果生产者不释放互斥锁，消费者是无法获取锁也就无法对num-1的]
+
+由于生产者线程让出CPU，时间片没执行完就让出CPU给消费者线程执行。
+
+消费者执行E[先对资源上锁（生产者的pthread_cond_wait()已经释放了锁,所以消费者这里可以上锁）]
+
+执行Do2[消费产品]
+
+执行G[发送信号给生产者，唤醒生产者，告诉它可以继续生产了]
+
+执行H[对消费者线程解锁]
+
+生产者线程继续过程B[此时的pthread_cond_wait()干这么几件事情：1.接收到消费者的信号，休眠被唤醒,解开阻塞；2.重新为生产者线程上互斥锁]
+
+执行Do1[生产产品]
+
+执行C[发送信号，但是没有实际作用，因为消费者并没有在等待信号]
+
+执行D[解锁]
+
+上面生产者线程,消费者线程和条件变量使用的都是同一个互斥锁
+
+
+
+关于条件变量的几个问题:
+0.为什么条件变量要配合互斥锁使用？
+首先我们要知道，条件的判断不在pthread_cond_wait函数中进行，而是在外部的while 中进行。
+而且条件变量num是一个共享资源。
+
+所谓的条件变量配合互斥锁是指进行条件变量的判断(while num<=0)和线程等待(pthread_cond_wait)要放在锁内( pthread_mutex_lock和 pthread_mutex_unlock 之间)
+
+假如不这样做很可能会造成条件判断成立后(while之后)，线程进入等待前(pthread_cond_wait之前)，这个条件被其他线程改变(例如有线程对num+1使得num=0变为num>0)。这样一来，线程无需进入等待，但是却还是进入了等待。
+
+
+
+1.pthread_cond_wait()做了些什么?
+pthread_cond_wait()做了两件事:
+a.释放互斥锁
+b.让本线程睡眠
+
+pthread_cond_wait会保证这两件事是一个原子操作,意味着pthread_cond_wait()释 放锁之后和睡眠之前,其他线程不会拿到锁,也不会调用 pthread_cond_signal()发送信号
+
+如果这两件事不是一个原子操作:例如,生产者线程要进行等待,pthread_cond_wait()先进行了解锁，这时候由于该线程时间片到期，没来得及让线程休眠,就切到消费者线程;消费者线程拿到了锁(因为生产者释放了锁),并消费了产品,发送信号,解锁。
+由于生产者没有来得及睡眠，所以消费者线程发送的信号会被忽略，也就是信号丢失。
+
+此时CPU切换回生产者线程，生产者线程继续刚刚没完成的休眠。此时生产者让出CPU，消费者线程要再消费一次，发送信号，才能唤醒生产者。
+
+也就是说，如果a,b不是原子操作,会导致其他线程发送的信号被忽略,本线程开始没必要的休眠
+
+
+本线程睡眠后 pthread_cond_wait() 还没有返回,等本线程接收到信号,pthread_cond_wait()会做:
+c.唤醒本线程
+d.重新加锁
+
+
+
+2.关于代码中的 Check1 和 Check2 中，为什么要用while而不是用if？
+这样是为了避免虚假唤醒(例如执行pthread_cond_broadcast时,所有线程的等待都会被唤醒),此时某些线程的条件是不满足唤醒条件的,所以要再判断一次条件,如果不满足唤醒条件则再执行pthread_cond_wait()重新进入等待。while可以重复判断而if只能判断一次。
+
+所以不使用while而使用if的话,遇到的最常见的报错就是,"队列已经为空,不能够再取出元素"
+
+
+3.在生产者线程等待时，消费者线程的发送信号是放在锁内还是锁外？
+例如：
+发送信号放在锁内：
+
+pthread_mutex_lock(&mutex)  //加锁
+
+// ...
+
+pthread_cond_signal(&cond) //发送信号
+pthread_mutex_unlock(&mutex);   // 解锁
+
+
+发送信号放在锁外:
+pthread_mutex_lock(&mutex)  //加锁
+
+// ...
+
+pthread_mutex_unlock(&mutex);   // 解锁
+pthread_cond_signal(&cond) //发送信号
+
+前者:发送信号后,生产者线程唤醒,但消费者的时间片还没用完,消费者会执行下面的解锁;然后生产者线程进入执行状态,发现锁已经释放,于是生产者加锁,执行后面的操作
+如果发送信号后,消费者的时间片用完,消费者没来得及解锁,生产者就开始执行;生产者线程被唤醒,尝试加锁,但是消费者没解锁,于是生产者再次进入阻塞状态,让出CPU;消费者拿到CPU,继续执行解锁,之后生产者才能顺利加锁
+
+后者:消费者先解锁后发送信号可以保证生产者被唤醒后可以马上拿到锁
+但是如果在消费者解锁后,发送信号前,有其他线程拿到锁,那么生产者线程还是要等待那个其他线程释放锁
+
+但无论如何,生产者线程被唤醒后无论如何都是能拿到锁的(即使可能这个锁被别人拿走了,也只是等一会就能拿到锁)，所以实际开发中不用太在意这个细节。
+
+4.如果有多个线程在等待，当某个线程发出通知 pthread_cond_signal() 的时候，是只有一个线程被唤醒还是所有线程被唤醒？
+首先我们要知道，当一个线程在执行 pthread_cond_wait 的时候，线程会释放锁，然后进入休眠状态。此时这个线程会被放到一个 条件等待队列 里面。如果有多个线程使用的是同一个条件变量，这些线程会按顺序的放到同一个队列中进行等待。
+
+执行 pthread_cond_signal()唤醒的时候，会从队列中取出一个线程进行唤醒。
+所以唤醒的时候只会唤醒一个线程，而且唤醒哪个线程也是有顺序的,因为这些等待线程是放在队列中的。
+
+如果是执行 pthread_cond_broadcast() 广播，则会唤醒所有线程。
+
+在这个例子中只有两个线程,如果是条件变量涉及到多个线程会更复杂。
+
+
+======================================
+
+
+使用fork创建进程
+
+fork创建的进程初始化状态和父进程一样，包括他们拥有的变量，空间
+
+系统会为fork出来的进程分配新资源。
+
+fork()没有参数，会返回两次，分别返回子进程id和0。两个返回值分别是父进程和子进程返回的。
+返回子进程id的是父进程，返回0的是子进程，可以根据这个判断和分辨父进程和子进程
+
+
+int main(){
+    pid_t pid;
+    int num = 100;
+    pid = fork();
+    if(pid==0){
+        count << "子进程" << endl;
+        while(true){
+            num+=1;
+            count << "num:" << num <<endl;
+            sleep(1);
+        }
+    }else if(pid>0){
+        count << "父进程" << endl;
+        while(true){
+            num-=1;
+            count << "num:" << num <<endl;
+            sleep(1);
+        }
+    }else if(pid<0){
+        count << "创建进程失败" <<endl;
+    }
+    
+    return 0;
+}
+
+上面的代码中：
+一个父进程创建了一个子进程。
+子进程和父进程并发运行（如果是单核的话）
+系统会拷贝一份父进程的内存空间和状态给子进程，所以父进程和子进程都有变量num
+由于是拷贝了一份内存空间，所以父进程和子进程的num变量是各自放在两块空间的。两个num指向的两块空间，所以父进程的num做减法会越来越小，子进程的num做加法会越来越大，两个num独立互不干扰
+
+如果父子进程中有更多变量，这些变量也是互不干扰的，因为他们是放在不同的两块内存中。
+
+无论是什么语言，在底层实现创建一个进程都是使用操作系统的fork()创建进程的。
+
+
+
+进程同步之共享内存
+
+我们知道每一个进程都有一块属于自己的一块内存空间，进程通过段页式管理，将段页这样的逻辑空间映射到物理内存这样的物理空间。
+
+多个进程使用物理内存的时候，从逻辑上每个进程的内存空间是独立的，每个进程的逻辑空间只是映射到物理内存的一小块空间，而这些空间不会重叠。
+
+所以：一个进程默认是不能访问其他进程的内存空间的。
+
+
+为了让多个进程之间的同步和通信，提出来共享内存。
+让多个进程各自的逻辑空间（页表）映射到物理内存的同一块物理空间
+
+共享内存是两个进程间共享和传递数据最快的方式
+但是共享内存未提供同步机制，需要借助其他机制管理访问
+
+使用共享内存要以下几个步骤
+1.申请共享内存
+2.让多个进程的逻辑空间映射到这块共享内存
+3.使用共享内存 
+4.解除映射，并删除这块共享内存（释放共享内存）
+
+共享内存是高性能后台开发中最常用的进程同步方式
+
+
+
+进程同步之Unix域套接字
+
+域套接字是一种高级的进程通信方法
+
+
+套接字(socket)原来是网络通信中使用的术语
+unix系统提供的域套接字提供了网络套接字类似的功能
+
+步骤：
+对于服务端而言：
+1.创建套接字
+2.绑定套接字(bind)
+3.监听套接字(listen)，例如监听有没有连接或者请求进来
+4.接收和处理信息
+
+对于客户端而言
+1.创建套接字
+2.连接套接字 
+3.发送请求
+
+
+=====================================
+
+接下来我们使用python实现一下上面的一些同步方法
+
+1.互斥锁
+
+from threading import Lock;     # 互斥锁
+
+# 先定义一个互斥锁对象 
+lock = Lock()
+
+# 加锁 
+lock.acquire()
+
+# 解锁 
+locak.release()
+
+#####################################
+拿之前的生产者消费者的经典例子为例：
+# coding=utf-8
+
+from threading import Thread
+from threading import Lock
+
+i=0
+lock = Lock()
+def task1():
+    times=10000000
+    global i
+    while(times):
+        lock.acquire()
+        i+=1
+        lock.release()
+        times-=1
+
+def task2():
+    times=10000000
+    global i
+    while(times):
+        lock.acquire()
+        i-=1
+        lock.release()
+        times-=1
+
+t1 = Thread(target=task1)
+t2 = Thread(target=task2)
+t1.start()
+t2.start()
+t1.join()
+t2.join()
+print(i)        # 如果不加互斥锁，得到的i不为0
+
+
+
+我们还可以模拟一下死锁的发生：
+回顾之前的内容，什么时候会发生死锁？当有两个临界资源x,y他们是独占资源，有两个程序A,B都需要用到这两个资源，A获取到了x，想再要去获取y；而此时B获取到了y，想再去获取x。此时A,B会互相等待对方释放资源，但A,B又不会主动释放自己手里的资源，于是死锁。
+
+在下面的例子里，我需要两个变量充当临界资源，需要两把锁把这两个变量变成独占资源。
+当出现下面的情况时，会出现死锁：
+在task1已经获取了锁lock1时正想要获取锁lock2，而此时task2已经获取了锁lock2，正想获取锁lock1。
+
+# coding=utf-8
+
+from threading import Thread
+from threading import Lock
+
+i=0
+j=0
+lock1 = Lock()
+lock2 = Lock()
+def task1():
+    times=1000000
+    global i,j
+    while(times):
+        lock1.acquire()
+        i+=1
+        print("i++")
+        
+        lock2.acquire()
+        j-=1
+        print("j--")
+        lock2.release()
+        
+        lock1.release()
+        times-=1
+
+def task2():
+    times=1000000
+    global i,j
+    while(times):
+        lock2.acquire()
+        j += 1
+        print("j++")
+        
+        lock1.acquire()
+        i -= 1
+        print("i--")
+        lock1.release()
+        
+        lock2.release()
+        times-=1
+
+t1 = Thread(target=task1)
+t2 = Thread(target=task2)
+t1.start()
+t2.start()
+t1.join()
+t2.join()
+print(i)
+print(j)
+
+
+所以当锁中嵌套锁的情况下，就可能会出现死锁 
+
+再介绍一个比较有趣的例子：多线程的有序进行
+lock1 = Lock()
+lock2 = Lock()
+lock3 = Lock()
+lock2.acquire()
+lock3.acquire()
+
+def task1():
+    while True:
+        lock1.acquire()
+        print("task1")
+        sleep(0.5)
+        lock2.release()
+
+def task2():
+    while True:
+        lock2.acquire()
+        print("task2")
+        sleep(0.5)
+        lock3.release()
+
+def task3():
+    while True:
+        lock3.acquire()
+        print("task3")
+        sleep(0.5)
+        lock1.release()
+
+
+if __name__=="__main__":
+    t1 = Thread(target=task1)
+    t2 = Thread(target=task2)
+    t3 = Thread(target=task3)
+    t1.start()
+    t2.start()
+    t3.start()
+    t1.join()
+    t2.join()
+    t3.join()
+    
+这个例子的有趣之处在于
+1.三个线程并发，但同一时间只有一把锁是处于释放状态，其他两个锁是处于锁定状态。
+2.输出数据时会加锁，输出完之后却会释放另一个线程要获取的锁而不是释放自己的这把锁。这意味着，这个线程执行完之后，只有要获取“上一个线程释放了的锁”的线程能执行，其他线程不能执行（因为这些线程想获取的锁被其他线程给锁住了）。通过之中方式可以指定线程的执行顺序。
+
+上面的线程是没有实际意义的，因为三个线程相当于是串行执行的，相比于单线程不用切换不用加锁和释放锁，这样串行的多线程效率反而还低些
+
+
+
+再看一个单纯用互斥锁而没有用条件变量所实现的多线程安全队列的例子。
+我们的目的是这样的：
+有4个列表list1~4,list1包含初始元素，list2~4是空的。
+我希望对list1中的数据x进行以下运算 (x+1)*2-3 
+
+元素从list1弹出，+1，再放到list2，使用线程1完成 |
+元素从list2弹出，*2，再放入list3，使用线程2完成 |--这三个过程是（并发的）同时发生的
+元素从list3弹出，-3，再放入list4，使用线程3完成 |
+
+下面我们计划一下，哪些过程需要加锁，哪些过程不用加锁
+现在线程使用到的资源有这么几样：list1~4,从list1~3取出来的元素
+互斥锁是为了解决资源竞争，所以我们需要对线程共享的资源加锁即可。
+list1只有线程1用到了，list4只有线程3用到了，所以对这两个list的操作不用加锁
+list2会被线程1和线程2两个线程用到，所以线程1,2在操作list2时要加锁
+list3同理，线程2,3操作list3时需要加锁。
+
+list1~3取出来的元素需要进行算数运算，而算术运算是由一个线程单独完成，所以每个元素只会被1个线程使用，所以元素进行算数运算的过程无需加锁。
+
+
+# coding=utf-8
+
+from threading import Thread,Lock
+from time import sleep,time
+
+lock1 = Lock()
+lock2 = Lock()
+list2=[]
+list3=[]
+list4=[]
+
+# 将元素从list1取出，进行+1处理，放入list2
+def task1():
+    while len(list1):
+        item = list1.pop()  # 取出元素
+        item+=1
+
+        # 放入list2时要对list2上锁
+        lock1.acquire()
+        list2.append(item)
+        print("task1 append %d" % item)
+        lock1.release()
+
+
+# 将元素从list2取出，进行*2处理，放入list3
+def task2():
+    while True:
+
+        if len(list2):
+            # 从list2取出元素时要对list2上锁
+            lock1.acquire()
+            item = list2.pop()
+            print("task2 pop %d" % item)
+            lock1.release()
+            
+            item=item*2  # 这里不用放到锁内
+            
+            # 将元素放入list3要对list3上锁，而且因为list2和list3是两个不同的资源，所以要用另一个锁来锁住list3
+            lock2.acquire()
+            list3.append(item)
+            print("task2 append %d" % item)
+            lock2.release()
+        else:
+            sleep(0.0001)
+
+# 将元素从list3取出，进行-3处理，放入list4
+def task3():
+    while True:
+        if len(list3):
+            lock2.acquire()
+            item = list3.pop()
+            print("task3 pop %d" % item)
+            lock2.release()
+            item-=3     # 这句不用放到锁内
+            list4.append(item)
+            print("task3 append %d" % item)
+        else:
+            sleep(0.0001)
+
+
+if __name__=="__main__":
+    list1 = list(range(100000))
+    t1 = Thread(target=task1)
+    t2 = Thread(target=task2)
+    t3 = Thread(target=task3)
+    t1.start()
+    t2.start()
+    t3.start()
+    t1.join()
+    t2.join()
+    t3.join()
+    
+在使用互斥锁的时候，多线程中加了锁的那段代码是串行的。其实在写程序的时候，我总是会想整个运行过程哪些过程是可以同时发生的（并发的），哪些过程是串行的，因为可以同时执行的地方就是多线程比单线程提升了效率的地方，而串行的地方其效率和单线程一样的。
+
+其实我们只用知道哪些地方是没有并发的就可以了，知道了哪些地方是没有并发的，那么其他所有地方都是并发的
+
+例如：我想知道 元素A压入list2，已经从list2弹出的元素B压入list3，已经从list3弹出的元素C压入list4 这三个动作是可以同时发生的吗？
+可以。因为从上面加锁的地方知道：元素A压入list2和元素B从list2弹出是不能同时进行的，元素B压入list3和元素C弹出list3不能同时进行。其他操作都可以同时发生。
+
+总结：程序中只需对多个线程都会使用到的元素进行上锁
+
+
+
+    
+2.条件变量 
+条件变量要配合互斥锁使用。在c语言中，需要先创建一个互斥锁，再将这个互斥锁传到条件变量的等待函数 pthread_cond_wait()中。
+
+在python中，锁是条件对象的一部分，不必单独地创建它。（python的条件变量也要用到互斥锁，不过这个互斥锁已经包含在条件对象中，无需特地创建一个锁）
+
+from threading import Condition;     # 互斥锁
+
+我们知道python里面有一个queue的库，这个是一个队列。队列也是一种进程或者线程间同步的方式
+接下来，写自己动手写一个线程安全的队列ThreadSafeQueue，既然是线程安全，那就要用到锁。
+这个自定义的队列要求有以下功能：
+1.线程可以从队列中写入元素 push() 和获取元素 pop();
+2.可以根据index获取队列中的某个元素
+3.当队列为空时，线程获取元素时会阻塞直到队列有元素；当队列满了时，线程添加元素也会阻塞
+4.保证多个线程获取元素是串行的，线程安全的
+
+下面用互斥锁，条件变量和列表实现一个线程安全的队列：
+
+# coding=utf-8
+
+from threading import Thread
+from threading import Lock,Condition
+import random
+
+class ThreadSafeQueue:
+    def __init__(self,max_size=0,blocking=True,timeout=None):  # 默认队列没有限制最大空间
+        self.max_size=max_size
+        self.blocking=blocking  # 默认等待阻塞
+        self.timeout=timeout    # 默认等待时间无限长
+        self.lock = Lock()
+        self.cond = Condition(lock=self.lock)  # 条件变量所使用的锁也是同一个互斥锁
+        self.queue = []
+
+    def size(self):     # self.queue是线程共享资源，所有关于self.queue的使用都要加锁，包括查和改
+        self.lock.acquire()
+        size = len(self.queue)
+        self.lock.release()
+
+        return size
+
+    def batch_push(self,items):
+        if not isinstance(items,list):
+            items=list(items)
+        for item in items:
+            self.push(item)
+
+    def push(self,item):
+        # self.cond.acquire()
+        while self.max_size>0 and self.size()>=self.max_size:
+            if self.blocking:
+                self.cond.acquire()
+                res = self.cond.wait(timeout=self.timeout)    # 如果超过timeout还没被唤醒，则返回False
+                self.cond.release()
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.cond.acquire()     # 这一句相当于 self.lock.acquire加锁
+        self.queue.append(item)
+        self.cond.notify()
+        self.cond.release()
+
+
+        return True
+
+    def pop(self):
+        while self.size()<=0:
+            if self.blocking:
+                self.cond.acquire()  # 调用self.cond.wait()的前后一定要执行cond.acquire()和cond.release(),来给条件变量加锁，否则会报错
+                res=self.cond.wait(timeout=self.timeout)
+                self.cond.release()
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.lock.acquire()
+        item = self.queue.pop()
+        self.cond.notify()          # 通知生产者可以继续生产
+        self.cond.release()
+
+        return item
+
+    def get(self,index):
+        self.lock.acquire()
+        try:
+            item = self.queue[index]
+        except:
+            item=None
+        self.lock.release()
+
+        return item
+
+# 生产者
+def produce(q,n):
+    for i in range(100000):
+        q.push(i)
+        print("Thread %d push %d" % (n,i))
+
+def consumer(q,n):
+    count_none = 0  # 如果q.pop()阻塞次数大于10则停止while循环
+    while True:
+        item = q.pop()
+        if item is False:
+            count_none+=1
+        else:
+            count_none=0
+            print("Thread %d pop %d" % (n,item))
+
+        if count_none>=10:
+            break
+
+
+# 测试
+if __name__=="__main__":
+    queue = ThreadSafeQueue(1000)       # 测试阻塞队列，结果是，消费者消费完所有产品后阻塞等待新产品生产，一直处于等待状态
+    # queue = ThreadSafeQueue(1000,timeout=1)       # 测试阻塞队列，结果是，消费者消费完所有产品后阻塞等待新产品生产，阻塞10次后自动跳出循环
+    # queue = ThreadSafeQueue(1000,blocking=False)    # 测试非阻塞队列，结果是，生产者由于多次被阻塞而放弃了很多次生产产品，消费者消费完所有产品后直接结束
+
+    # 创建两个生产者线程，一个消费者线程,使得生产产品的速度比消费产品的速度快，这样消费产品不会等待，而生产产品会等待
+    t1 = Thread(target=produce,args=(queue,1))
+    t2 = Thread(target=produce,args=(queue,2))
+    t3 = Thread(target=consumer,args=(queue,3))
+    t1.start()
+    t2.start()
+    t3.start()
+    t1.join()
+    t2.join()
+    t3.join()
+    
+    
+
+3.事件对象
+事件对象也是线程之间通信的最简单机制之一：一个线程发出事件信号，而其他线程等待该信号。这个信号在线程间是共享的。当线程执行到要发生等待的代码(wait())时，会去判断这个信号是True还是False，如果是True则无需等待直接往下执行；如果是False则需要等待直到这个信号被其他线程改为True(set())才会往下执行。
+如果有多个线程陷入等待状态，当信号被某个线程设为True时，所有线程都会被唤醒。这点是事件对象和条件变量不同的地方，条件变量唤醒(notify())只能唤醒一个线程,除非使用notify_all()是唤醒全部线程。
+还有一个区别是，条件变量调用wait()是一定会阻塞的。而事件对象调用wait()不一定会阻塞。
+
+事件对象的使用：
+
+e = threading.Event()   # 创建一个事件对象
+
+e.wait()    # 阻塞线程。如果此时信号为True则wait()不会阻塞。如果信号为False则wait()会阻塞直到信号变为True
+
+e.clear()   # 修改信号为False
+
+e.set()     # 修改信号为True
+
+e.is_set()  # 判断信号是否为True
+
+
+接下来实现一个事件对象版本的生产者消费者模型：
+
+# coding=utf-8
+
+from threading import Thread,Event,Lock
+from queue import Queue
+import threading
+
+e_producer = Event()     # 创建一个生产者的事件对象
+e_consumer = Event()    # 创建一个消费者的事件对象
+queue = Queue(1000) # 队列长度为1000
+
+def producer():
+    for i in range(100000):
+        if queue.qsize()>=1000:
+            e_producer.clear()   # 关闭信号
+            e_producer.wait()
+        queue.put(i,block=False)    # 为了凸显线程的同步是由事件对象发挥作用的而不是由队列发挥作用的（阻塞是由事件对象完成的而不是队列完成的），这里将put设为非阻塞状态,也即是说如果队列满了还添加元素会报错
+        e_consumer.set()    # 生产产品后，唤醒消费者
+
+def consumer():
+    while True:
+        if queue.qsize()<=0:
+            e_consumer.clear()   # 关闭信号
+            e_consumer.wait()
+
+        item = queue.get(block=False)    # 为了凸显线程的同步是由事件对象发挥作用的而不是由队列发挥作用的，这里将get设为非阻塞状态
+        e_producer.set()    # 消费产品后，唤醒消费者
+
+        print("线程：%s 消费产品：%d" % (threading.current_thread().getName(),item))
+
+
+if __name__=="__main__":
+    t1 = Thread(target=producer)
+    t2 = Thread(target=consumer)    # 两个消费者，一个生产者
+    t3 = Thread(target=consumer)
+    t1.start()
+    t2.start()
+    t3.start()
+    t1.join()
+    t2.join()
+    t3.join()
+    
+上面的程序有两个问题：
+1.由于两个消费者一个生产者，所以消费速度比生产速度快。消费者线程会阻塞。如果两个消费者都被阻塞，生产者生产好一个产品后，将信号量改为True，两个消费者会同时被唤醒，两个消费者会同时去queue中取产品。但是queue产品只有一个，所以只有一个消费者会拿到产品，另一个会报错。
+为了防止这个问题，将if queue.qsize()<=0改为 while。即当某个消费者被唤醒，需要查看一下队列是否还有元素。
+
+2.当消费者消费完所有产品会进入永久的阻塞。
+为了解决这个问题，可多创建一个用于监听生产是否完成的事件对象。
+e_finish = Event()
+
+逻辑改为： # *是添加的代码
+def producer():
+    for i in range(100000):
+        while queue.qsize()>=1000:
+            e_producer.clear()
+            e_producer.wait()
+        queue.put(i,block=False)    
+        e_consumer.set()    
+        e_finish.clear()    # * 这句的意义在于，如果有多个生产者，一个生产者先完成10万次循环会执行set(),但是其他生产者线程没有完成10万次循环。所以其他生产者要在循环的时候设置clear()设置信号量为False
+
+    e_finish.set()  # * 循环完毕10万次后，表示该生产者已经完成生产，可以将e_finish对象的信号改为True
+   
+   
+def consumer():
+    finished=False
+    while True:
+        while queue.qsize()<=0:
+            if e_finish.is_set():   # * 如果是由于生产者生产完毕而导致的queue中元素为0，则停止消费，e_consumer不再进入等待，并且跳出最外层循环while True ；
+                finished=True
+                break
+            e_consumer.clear() 
+            e_consumer.wait()
+
+        if finished:
+            break    # * 跳出最外层循环while True；由于python没有 break 2 这种跳出多层循环的功能，所以才要这样写。
+
+        item = queue.get(block=False)
+
+        print("线程：%s 消费产品：%d" % (threading.current_thread().getName(),item))
+    
+if __name__=="__main__":
+    t1 = Thread(target=producer)
+    t2 = Thread(target=producer)
+    t3 = Thread(target=consumer)    # 两个消费者，两个生产者
+    t4 = Thread(target=consumer)
+    t1.start()
+    t2.start()
+    t3.start()
+    t4.start()
+    t1.join()
+    t2.join()
+    t3.join()
+    t4.join()
+ 
+ 
+在这里,本人认为python的事件对象其实还是使用的条件变量来实现的,只是唤醒event的时候是将同一个Event对象的所有wait都唤醒。这个可能是通过C语言的pthread_cond_broadcast实现的
+ 
+4.线程池
+线程池是存放多个线程的容器
+CPU从线程池中调度线程并执行，执行后不会销毁线程，而是将线程放回线程池以便重复利用。
+
+为什么要使用线程池
+1.线程是稀缺资源（线程的创建时会消耗资源和时间的）
+所以不应该频繁的创建和销毁
+
+2.架构解耦
+将线程的创建和业务的处理分开，更加优雅。
+意思是，我们不应该等到要处理业务的时候才去创建线程。而是应该一开始就把多个线程创建好，等到要处理业务的时候直接从线程池里面拿线程就好。
+
+3.线程池本来就是使用线程的最佳实践 
+
+现在我们要搭建一个比较完整的多线程任务处理体系。其中我们需要以下几样东西：
+1.要执行的任务(任务对象Task)
+2.存放多个任务的队列(任务队列ThreadSafeQueue)
+3.处理任务的线程(线程对象ProcessThread)
+4.存放线程的线程池(ThreadPool)
+
+
+# coding=utf-8
+
+from threading import Thread,Lock,Condition,Event
+import uuid,psutil
+import time
+
+# 线程安全队列
+class ThreadSafeQueue:
+    def __init__(self,max_size=0,blocking=True,timeout=None):  # 默认队列没有限制最大空间
+        self.max_size=max_size
+        self.blocking=blocking  # 默认等待阻塞
+        self.timeout=timeout    # 默认等待时间无限长
+        self.lock = Lock()
+        self.cond = Condition(lock=self.lock)  # 条件变量所使用的锁也是同一个互斥锁
+        self.queue = []
+
+    def size(self):     # self.queue是线程共享资源，所有关于self.queue的使用都要加锁，包括查和改
+        self.lock.acquire()
+        size = len(self.queue)
+        self.lock.release()
+
+        return size
+
+    def batch_push(self,items):
+        if not isinstance(items,list):
+            items=list(items)
+        for item in items:
+            self.push(item)
+
+    def push(self,item):
+        # self.cond.acquire()
+        while self.max_size>0 and self.size()>=self.max_size:
+            if self.blocking:
+                self.cond.acquire()
+                res = self.cond.wait(timeout=self.timeout)    # 如果超过timeout还没被唤醒，则返回False
+                self.cond.release()
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.cond.acquire()     # 这一句相当于 self.lock.acquire加锁
+        self.queue.append(item)
+        self.cond.notify()
+        self.cond.release()
+
+
+        return True
+
+    def pop(self):
+        while self.size()<=0:
+            if self.blocking:
+                self.cond.acquire()  # 调用self.cond.wait()的前后一定要执行cond.acquire()和cond.release(),来给条件变量加锁，否则会报错
+                res=self.cond.wait(timeout=self.timeout)
+                self.cond.release()
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.lock.acquire()
+        item = self.queue.pop()
+        self.cond.notify()          # 通知生产者可以继续生产
+        self.cond.release()
+
+        return item
+
+    def get(self,index):
+        self.lock.acquire()
+        try:
+            item = self.queue[index]
+        except:
+            item=None
+        self.lock.release()
+
+        return item
+
+# 任务对象,一个任务只能创建一个任务对象。或者说一个任务对象只代表一个任务
+class Task:
+    def __init__(self,func,*args,**kwargs):
+        self.id = uuid.uuid4()      # 每一个任务都有一个唯一标识
+        self.callable=func
+        self.args = args
+        self.kwargs=kwargs
+
+    def do_task(self):
+        self.callable(*self.args,**self.kwargs)
+
+    def __str__(self):
+        print("任务id为 %s" % str(self.id))
+
+    def __repr__(self):
+        print("任务id为 %s" % str(self.id))
+
+# 任务线程对象
+class ProcessThread(Thread):
+    def __init__(self,queue,*args,**kwargs):
+        super(ProcessThread, self).__init__(*args,**kwargs)
+        self.dismiss_flag = Event()     # 定义一个事件对象用于停止线程运行
+        self.queue=queue
+        self.args=args
+        self.kwargs=kwargs
+
+    # 改写run方法，线程要做的是在不断在queue中获取要执行的任务,并且执行这个任务
+    def run(self):
+        while True:
+            if self.dismiss_flag.is_set():  # 如果信号为True，表示不再往队列取任务，停止运行线程。这个判断要放在queue.pop()之前。如果放在queue.pop()之后,当队列为空且不再生产任务时再执行到pop()陷入永久阻塞,就执行不到if self.dismiss_flag.is_set()了
+                # print("信号量True")
+                break
+            task = self.queue.pop()     # 没有任务时会阻塞
+            if not isinstance(task,Task):   # 如果队列中的任务不是Task类的实例就不执行这个任务
+                continue
+            result = task.do_task()
+
+    def stop(self):
+        # print("关闭")
+        self.dismiss_flag.set()     # 设置信号为True，停止运行线程
+
+# 线程池类
+# 线程池的功能：1 存放多个ProcessThread线程对象； 2.负责线程的启动停止； 3.接收Task任务对象并存放到任务队列中
+# 总结就是存放线程和控制线程执行
+class ThreadPool:
+    def __init__(self,size=0):
+        # 默认线程池中的线程数量是CPU核数的两倍
+        if size==0:
+            self.size=psutil.cpu_count()*2
+        else:
+            self.size=size
+
+        # 线程池容器,这个容器是一个队列
+        self.pool = ThreadSafeQueue(self.size)
+
+        # 任务队列
+        self.task_queue = ThreadSafeQueue()
+
+        # 初始化线程池，创建线程并将线程放入线程池中
+        for i in range(self.size):
+            thread = ProcessThread(self.task_queue)
+            self.pool.push(thread)
+
+    # 启动所有线程
+    def start(self):
+        for i in range(self.size):
+            thread = self.pool.get(i)
+            thread.start()
+
+    # 停止所有线程
+    def stop(self):
+        for i in range(self.size):
+            thread = self.pool.get(i)
+            thread.stop()   # 现在只是停止运行，但是线程还没从线程池销毁
+
+        while self.pool.size():
+            thread = self.pool.pop()    # 从线程池中弹出线程
+            thread.join()
+
+
+    # 将任务放入任务队列，只要线程开始执行，线程会自动去获取任务队列中的任务
+    def put(self,task):
+        if not isinstance(task,Task):
+            raise TaskTypeException
+        self.task_queue.push(task)
+
+    # 批量添加任务到任务队列
+    def batch_put(self,tasks):
+        if not isinstance(tasks,list):
+            tasks = list(tasks)
+        for task in tasks:
+            self.task_queue.push(task)
+
+    # 获取线程池线程数量
+    def size(self):
+        return self.pool.size()
+
+
+class TaskTypeException(Exception):
+    pass
+
+if __name__=="__main__":
+    # 使用线程池做简单任务：
+    def simpleTask():
+        #time.sleep(0.5)
+        print("print 1")
+        #time.sleep(0.5)
+        print("print 2")
+
+    # 实例化一个线程池
+    pool = ThreadPool()
+
+    # 先将线程池中所有线程启动，一开始没有任务，所以所有线程启动之后立即进入等待状态
+    pool.start()
+
+    # 添加10万个任务给线程池，里面的线程会自动获取任务执行
+    print("开始执行任务")
+    for i in range(100000):
+        task = Task(simpleTask)
+        pool.put(task)
+
+    
+    
+运行代码发现报错：
+IndexError: pop from empty list
+
+意思是列表是空的，不能从里面取出内容。错误时出错在 ThreadSafeQueue 中的pop函数中
+
+def pop(self):
+        while self.size()<=0:
+            if self.blocking:
+                self.cond.acquire() 
+                res=self.cond.wait(timeout=self.timeout)  # S
+                self.cond.release()     # A
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.lock.acquire()         # B
+        item = self.queue.pop()     # 错误出在这里
+        self.cond.notify()          
+        self.cond.release()
+
+        return item
+        
+原因是：现在有12个线程（我的电脑6核，所以开了12个线程）在从任务队列中取任务，但是只有一个线程往任务队列中添加任务，所以消费的速度比生产慢。
+所以当任务队列的元素从0到1时，会唤醒某个线程取任务，但是，从 # A 到 # B 这个过程，任务被其他线程取走了，此时队列元素有变为0了。所以，应该在锁内判断一下任务队列中是否有任务，在锁内任务队列是不会被其他线程修改的，所以在锁内判断得到的任务队列元素个数才是正确的。
+
+修改为：
+def pop(self):
+        while self.size()<=0:
+            if self.blocking:
+                self.cond.acquire() 
+                res=self.cond.wait(timeout=self.timeout)  # S
+                self.cond.release()     
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.lock.acquire()         
+        if len(self.queue)<=0:      # 这里千万不要写成 if self.size()<=0；因为size()方法中也是要上锁的，这么一来，锁中有锁，里面的锁等待外面的锁解开，于是就死锁了，线程一直阻塞下去
+            item=None
+        else:
+            item = self.queue.pop()
+        self.cond.notify()          
+        self.cond.release()
+
+        return item
+        
+同理， ThreadSafeQueue的push方法也要这么改。
+
+
+
+现在还有个瑕疵：
+使用多线程执行任务是异步执行的，所以我们不知道什么任务时候执行，什么时候执行完。也不能获取到任务执行结果。
+
+解决方式和思路：
+任务结果的获取是发生在主线程，任务结果的设置是发生在线程池中的线程，要等线程执行完这个任务才会设置结果
+如果主线程去获取任务结果时，线程池中的线程还没有执行完，此时主线程就要等待结果设置好了get_result才能获取到结果并返回
+可以给任务添加一个条件变量来实现上述过程，任务没完成则条件变量处于等待状态（等待阻塞的是主线程），任务完成后则发出通知,唤醒主线程
+
+
+# 定义一个异步任务对象
+class AsyncTask(Task):
+    def __init__(self,func,*args,**kwargs):
+        self.result = None     # 存放任务的执行结果
+        self.cond = Condition()     # 条件变量，用于等待任务执行完成返回结果
+        super(AsyncTask, self).__init__(func,*args,**kwargs)
+
+    def set_result(self,result):    # 这个方法是在线程池中的线程调用的。是当任务完成后调用的
+        self.cond.acquire()
+        self.result = result
+        self.cond.notify()      # 发出通知，唤醒get_result中的等待
+        self.cond.release()
+
+    def get_result(self):       # 这个方法是在主线程调用的，当主线程调用该方法时，如果任务没有执行完，result还是为None，就会等待任务执行完（由于get_result是在主线程执行，所以发生阻塞的话，它阻塞的也是主线程），此时线程会调用set_result，将任务执行结果返回给result属性并通知条件变量，唤醒主线程
+
+        self.cond.acquire()
+        if not self.result:
+            self.cond.wait()
+        result=self.result
+        self.cond.release()
+
+        return result      # 如果调用get_result时，任务已经完成，那么就不会执行wait(),就无需等待
+
+        
+
+        
+        
+        
+        
+完整版的线程池如下：
+# coding=utf-8
+
+from threading import Thread,Lock,Condition,Event
+import uuid,psutil
+import time
+
+# 线程安全队列
+class ThreadSafeQueue:
+    def __init__(self,max_size=0,blocking=True,timeout=None):  # 默认队列没有限制最大空间
+        self.max_size=max_size
+        self.blocking=blocking  # 默认等待阻塞
+        self.timeout=timeout    # 默认等待时间无限长
+        self.lock = Lock()
+        self.cond = Condition(lock=self.lock)  # 条件变量所使用的锁也是同一个互斥锁
+        self.queue = []
+
+    def size(self):     # self.queue是线程共享资源，所有关于self.queue的使用都要加锁，包括查和改
+        self.lock.acquire()
+        size = len(self.queue)
+        self.lock.release()
+
+        return size
+
+    def batch_push(self,items):
+        if not isinstance(items,list):
+            items=list(items)
+        for item in items:
+            self.push(item)
+
+    def push(self,item):
+        while self.max_size>0 and self.size()>=self.max_size:
+            if self.blocking:
+                self.cond.acquire()
+                res = self.cond.wait(timeout=self.timeout)    # 如果超过timeout还没被唤醒，则返回False
+                self.cond.release()
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.cond.acquire()     # 这一句相当于 self.lock.acquire加锁
+        self.queue.append(item)
+        self.cond.notify()
+        self.cond.release()
+
+
+        return True
+
+    def pop(self):
+        while self.size()<=0:
+            if self.blocking:
+                self.cond.acquire()  # 调用self.cond.wait()的前后一定要执行cond.acquire()和cond.release(),来给条件变量加锁，否则会报错
+                res=self.cond.wait(timeout=self.timeout)
+                self.cond.release()
+                if not res:
+                    return False
+            else:
+                return False
+
+        self.lock.acquire()
+        if len(self.queue)<=0:
+            item=None
+        else:
+            item = self.queue.pop()
+        self.cond.notify()          # 通知生产者可以继续生产
+        self.cond.release()
+
+        return item
+
+    def get(self,index):
+        self.lock.acquire()
+        try:
+            item = self.queue[index]
+        except:
+            item=None
+        self.lock.release()
+
+        return item
+
+# 任务对象,一个任务只能创建一个任务对象。或者说一个任务对象只代表一个任务
+class Task:
+    def __init__(self,func,*args,**kwargs):
+        self.id = uuid.uuid4()      # 每一个任务都有一个唯一标识
+        self.callable=func
+        self.args = args
+        self.kwargs=kwargs
+
+    def do_task(self):
+# **
+        result = self.callable(*self.args,**self.kwargs)
+        return result
+
+    def __str__(self):
+        print("任务id为 %s" % str(self.id))
+
+    def __repr__(self):
+        print("任务id为 %s" % str(self.id))
+
+
+        
+# **
+
+# 异步任务对象
+class AsyncTask(Task):
+    def __init__(self,func,*args,**kwargs):
+        self.result = None     # 存放任务的执行结果
+        self.cond = Condition()     # 条件变量，用于等待任务执行完成返回结果
+        super(AsyncTask, self).__init__(func,*args,**kwargs)
+
+    def set_result(self,result):    # 这个方法是在线程池中的线程调用的。是当任务完成后调用的
+        self.cond.acquire()
+        self.result = result
+        self.cond.notify()      # 发出通知，唤醒get_result中的等待
+        self.cond.release()
+
+    def get_result(self):       # 这个方法是在主线程调用的，当主线程调用该方法时，如果任务没有执行完，result还是为None，就会等待任务执行完（由于get_result是在主线程执行，所以发生阻塞的话，它阻塞的也是主线程），此时线程会调用set_result，将任务执行结果返回给result属性并通知条件变量，唤醒主线程
+
+        self.cond.acquire()
+        if not self.result:
+            self.cond.wait()
+        result=self.result
+        self.cond.release()
+
+        return result      # 如果调用get_result时，任务已经完成，那么就不会执行wait(),就无需等待
+
+# 任务线程对象
+class ProcessThread(Thread):
+    def __init__(self,queue,*args,**kwargs):
+        super(ProcessThread, self).__init__(*args,**kwargs)
+        self.dismiss_flag = Event()     # 定义一个事件对象用于停止线程运行
+        self.queue=queue
+        self.args=args
+        self.kwargs=kwargs
+
+    # 改写run方法，线程要做的是在不断在queue中获取要执行的任务,并且执行这个任务
+    def run(self):
+        while True:
+            if self.dismiss_flag.is_set():  # 如果信号为True，表示不再往队列取任务，停止运行线程。这个判断要放在queue.pop()之前，以防队列为空且不再生产任务时再执行到pop()陷入永久阻塞
+                # print("信号量True")
+                break
+            task = self.queue.pop()     # 没有任务时会阻塞
+            if not isinstance(task,Task):   # 如果队列中的任务不是Task类的实例就不执行这个任务
+                continue
+
+            result = task.do_task()
+
+# **
+            if isinstance(task,AsyncTask):      # 如果这个任务是有返回值的任务，就设置返回值
+                task.set_result(result)
+
+
+
+    def stop(self):
+        # print("关闭")
+        self.dismiss_flag.set()     # 设置信号为True，停止运行线程
+
+# 线程池类
+# 线程池的功能：1 存放多个ProcessThread线程对象； 2.负责线程的启动停止； 3.接收Task任务对象并存放到任务队列中
+# 总结就是存放线程和控制线程执行
+class ThreadPool:
+    def __init__(self,size=0):
+        # 默认线程池中的线程数量是CPU核数的两倍
+        if size==0:
+            self.size=psutil.cpu_count()*2
+        else:
+            self.size=size
+
+        # 线程池容器,这个容器是一个队列
+        self.pool = ThreadSafeQueue(self.size)
+
+        # 任务队列
+        self.task_queue = ThreadSafeQueue()
+
+        # 初始化线程池，创建线程并将线程放入线程池中
+        for i in range(self.size):
+            thread = ProcessThread(self.task_queue)
+            self.pool.push(thread)
+
+    # 启动所有线程
+    def start(self):
+        for i in range(self.size):
+            thread = self.pool.get(i)
+            thread.start()
+
+    # 停止所有线程
+    def stop(self):
+        for i in range(self.size):
+            thread = self.pool.get(i)
+            thread.stop()   # 现在只是停止运行，但是线程还没从线程池销毁
+
+        while self.pool.size():
+            thread = self.pool.pop()    # 从线程池中弹出线程
+            thread.join()
+
+
+    # 将任务放入任务队列，只要线程开始执行，线程会自动去获取任务队列中的任务
+    def put(self,task):
+        if not isinstance(task,Task):
+            raise TaskTypeException
+        self.task_queue.push(task)
+
+    # 批量添加任务到任务队列
+    def batch_put(self,tasks):
+        if not isinstance(tasks,list):
+            tasks = list(tasks)
+        for task in tasks:
+            self.task_queue.push(task)
+
+    # 获取线程池线程数量
+    def size(self):
+        return self.pool.size()
+
+
+class TaskTypeException(Exception):
+    pass
+
+if __name__=="__main__":
+    # 测试有返回值的任务
+    def asyncTask():
+        num=0
+        for i in range(1000):
+            num+=i
+        return num
+
+    # 实例化一个线程池
+    pool = ThreadPool()
+
+    # 先将线程池中所有线程启动，一开始没有任务，所以所有线程启动之后立即进入等待状态
+    pool.start()
+
+    # 添加100000个任务给线程池，里面的线程会自动获取任务执行
+    print("开始执行任务")
+    task_list=[]
+    for i in range(100000):
+        task = AsyncTask(asyncTask)
+        pool.put(task)
+        task_list.append(task)
+       
+    # 在此处可以进行一些主线程的逻辑处理，在主线程处理自己的逻辑的时候，线程池中的线程也在异步处理任务队列中的任务。
+       
+    for task in task_list:
+        print(task.get_result())
+
+在主线程调用 get_result() 可能会阻塞，可能不会阻塞。假如在主线程处理逻辑的过程中，任务队列的任务处理好了，调用get_result()就不会阻塞，反之就会阻塞。
+
+所以，异步操作的原理就是条件变量或者事件对象
+
+
+做了这么多的实例如何理解互斥锁:
+可以这样理解:多线程是并行的。多线程中加了同一把锁的锁内代码是串行的。
+以下面的伪代码为例： 
+
+In Thread1：
+---------------|
+code A         |
+acquire lock1  |
+code B         |
+release lock1  |
+code C         |
+---------------|
+
+In Thread2：
+---------------|
+code M         |
+acquire lock1  |
+code N         |
+release lock1  |
+code P         |
+---------------|
+
+
+线程1的A,C和线程2的M,N,P是并行的
+线程1的B和线程2的M,P是并行的
+线程1的B和线程2的N是串行的
+
+
+
+在这里顺便结合之前redis的知识,解释一下为什么redis使用单线程而不是多线程。
+我们知道，在单核的情况下,多线程很适合用于需要等待的任务,例如文件IO操作,爬虫。因为在进行磁盘IO操作的等待过程中，CPU可以切换给其他线程执行，从而实现磁盘操作的异步性，提升执行效率。
+但是执行redis命令是纯内存操作，所以执行命令的时候几乎不需要等待。所以此时用单线程会比用多线程好，好在单线程不用进行线程间的切换，节省了线程间切换的时间（当然，还是要进行进程间的切换）。
+而且，我们知道，redis要执行的命令会被放在一条队列中排队执行，如果我们使用了多线程，为了维持线程安全，需要对这个队列上锁，线程A从队列取任务，线程B要等待锁释放。所以加锁和释放锁要消耗时间，线程B,C,D...等所有无法获取锁的线程在等待锁的时候要进入休眠会进行线程间切换，增加了切换次数(使用锁的多线程比不使用锁的多线程的切换次数要多,因为前者在时间片用完或者等待锁的时候这两种情况都会切换,后者只有在时间片用完这一种情况才会切换)，从而增加了切换的时间。
+而单线程由于没有多线程竞争临界资源的困扰,所以无需对队列加锁,避免了上面的加锁解锁的时间损耗和多次切换线程的损耗
+
+在这里顺便强调和回顾一下:加锁是为了解决多线程竞争使用临界资源或者说共享资源而提出来的。所以如果是单线程，不存在竞争问题，无需加锁。多线程如果不操作同一个资源，就不存在竞争问题，此时也不用加锁。
+
+综合上述两点:
+1.redis纯内存操作,执行命令时无需等待,所以单线程与多线程执行效率相同的情况下,单线程少了线程切换的时间
+2.redis命令会放在redis的一个队列中排队执行,如果使用多线程会存在竞争使用队列，所以需要上锁；单线程没有竞争不需要上锁,节省了因上锁导致的切换时间
+
+当然,由于redis是单线程,所以无法充分利用多核;当然,有时候redis是多进程的,例如redis进行rdb持久化的时候,redis就会新开一个进程进行rdb快照生成,这样主进程执行客户端命令,子进程执行rdb快照生成,在多核中可以并行发生，如果是单核就只能并发发生。
+
+
+
+在这里再顺便说一下memcache也是纯内存操作为啥要使用多线程而不是单线程
+我的理解是这样的：memcache这种纯k-v结构的存储模式,更多会被用来缓存静态资源,例如图片,静态网页，静态文件内容等
+而这些内容一般都会比较大,几百k（memcache一个key默认能存的最大value是1M）。
+执行get命令获取的时候就会消耗比较多的时间，如果这个时候高并发，有很多memcache命令要执行。这时使用单线程，每一个命令执行都要消耗一定时间，后面的命令就会被阻塞住，要等待比较长的时间才能得到执行。
+用多线程则可以并发的执行这些命令

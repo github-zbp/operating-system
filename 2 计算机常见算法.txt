@@ -1,0 +1,534 @@
+双向链表（double linked list）的原理与实践
+
+首先介绍一下单向链表
+单向链表（单链表）是链表的一种
+链表上有多个节点，每个节点都包含一个key-value的键值对（或者其他数据）和下一个节点的地址（或者说引用或指针或链接），链接方向是单向的,最后一个节点的指针指向Null
+对链表节点的访问要通过顺序读取从头部开始
+
+|---------|      指针
+|key-value|---------------->
+|---------|
+
+上面就是一个单向链表的节点
+
+
+|---------| 指针 |---------| 指针  |---------| 指针         
+|key-value|----->|key-value|------>|key-value|------->Null
+|---------|      |---------|       |---------|                   
+
+这就是一个由3个节点组成的单向链表
+
+注意，链表的节点是由键值对和指针组成的，别漏了指针
+
+
+
+双向链表只有一个地方是和单向链表不同的，双向链表的每个节点包含向前指针和向后指针（指针就是节点的地址），而单向链表只有向后指针，节点通过向前指针可以找到上一个节点。双向链表还有一个head指针指向头部节点，tail指针指向尾部节点。
+所以双向链表可以顺着遍历，也可以倒着遍历。
+
+
+<----------------|---------|      
+       指针      |key-value|      指针
+                 |---------|---------------->
+
+上面就是一个双向链表的节点
+
+          head                             tail
+           |                                |
+           V                                V
+Null<---|-----|<---|-----|<---|-----|<---|-----|
+        | k-v |    | k-v |    | k-v |    | k-v |
+        |-----|--->|-----|--->|-----|--->|-----|--->Null
+        
+        
+上面是一个双向链表
+双向链表的头部节点的向前指针指向空，尾部节点的向后指针指向空。
+
+其实节点不是存放在链表中，链表只存放着节点个数，头部指针和尾部指针（指针就是节点的地址）
+节点是离散的存在其他内存空间的
+但是我们可以通过链表的头部尾部指针和节点本身的向前向后指针从而找到任意一个节点。
+头部尾部指针是链表的指针，而不是节点的指针。
+
+下面用python实现一个双向链表，该双向链表要求有以下功能：
+1.每个节点都能存放key-value数据
+2.能往链表头部尾部添加和弹出节点
+3.能在链表的任何位置添加和删除节点
+
+
+我们要实现两个类，节点类和链表类
+
+# coding=utf-8
+
+class Node:
+    def __init__(self,key,value):
+        self.key = str(key)
+        self.value=str(value)
+        self.prev=None      # 节点的向前指针，默认指向空
+        self.next=None      # 节点的向后指针，默认指向空
+
+    def __str__(self):
+        return "{%s,%s}" % (self.key,self.value)
+
+    def __repr__(self):
+        return "{%s,%s}" % (self.key,self.value)
+
+
+class DoubleLinkedList:
+    def __init__(self,capacity=0xffff):
+        self.capacity = capacity    # 定义链表的容量，默认为2^16-1=65535 bytes=64k
+        self.head=None      # 链表的头部指针，一开始链表中没有节点，所以为空
+        self.tail=None      # 链表的尾部指针，一开始链表中没有节点，所以为空
+        self.size=0         # 节点个数
+
+    # 往头部添加节点
+    def unshift(self,node):
+        if not self.head:   # 如果头部指针为空，说明链表没有节点，此时头部指针和尾部指针都指向新加的节点
+            self.head=node
+            self.tail=node
+            node.prev=None
+            node.next=None
+        else:   # 如果链表已有节点，则把头部指针指向新添节点node，node向后指针指向原头部节点，原头部节点的向前指针指向node
+            node.prev=None
+            node.next=self.head
+            self.head.prev=node
+            self.head=node      #头部指针指向node节点
+
+        self.size+=1        # 节点数+1
+
+    # 往头部弹出节点
+    def shift(self):
+        if not self.head:   # 如果链表没有节点，则返回空
+            return
+
+        node = self.head
+        if self.size==1:    # 如果链表只有一个节点
+            self.head=None
+            self.tail=None
+        else:
+            # 将原头部节点的向后指针指向空，将头部指针指向原头部节点的下一个节点,将新头部节点的向前指针指向空
+            self.head=self.head.next    # 将头部指针指向原头部节点的下一个节点
+            node.next=None      # 将原头部节点的向后指针指向空
+            self.head.prev=None # 将新头部节点的向前指针指向空
+
+        self.size-=1
+
+        return node     # 返回被弹出的节点
+
+    # 往尾部添加节点
+    def push(self,node):
+        if not self.tail:
+            self.head=node
+            self.tail=node
+            node.prev=None
+            node.next=None
+        else:
+            node.next=None
+            self.tail.next = node   # 原尾部节点的向后指针指向node
+            node.prev=self.tail     # node的向前指针指向原尾部节点
+            self.tail=node          # 链表的尾部指针指向node
+
+        self.size+=1
+
+    # 往尾部弹出节点
+    def pop(self):
+        if not self.tail:
+            return
+
+        node=self.tail
+        if self.size==1:
+            self.tail=None
+            self.head=None
+        else:
+            node.prev.next=None     # 原尾部节点的上一个节点的尾部指针指向空
+            self.tail=node.prev     # 尾部指针指向原尾部节点的上一个节点
+            node.prev=None          # 原尾部节点的向前指针指向空
+
+        self.size-=1
+        return node
+
+
+
+    # 从任意位置删除节点
+    def remove(self,node):
+        if node==self.head: # 如果删除的节点是头部节点，则调用shift
+            return self.shift()
+        elif node==self.tail:
+            return self.pop()
+        else:   # 如果不是头部节点也不是尾部节点
+            prev = node.prev
+            next = node.next
+
+            if not prev or not node.next:   # 如果要删除的节点没有前后节点，而且也不是头部或者尾部节点，那么说明该节点不在链表中
+                return
+            node.prev=None
+            node.next=None
+            prev.next=next
+            next.prev=prev
+
+            self.size-=1
+            return node
+
+    # 输出链表所有节点
+    def print(self):
+        current = self.head  # 把当前指针指向头部节点
+        content=""
+        while current:
+            content+=str(current)
+            if current.next:
+                content+="->"
+            current=current.next
+
+        print("共有%d个节点，它们是：%s" % (self.size,content))
+
+
+if __name__=="__main__":
+    l=DoubleLinkedList()
+    node_box = []
+    for i in range(1,11):    # 创建10个节点
+        node_box.append(Node(i,i))
+
+    l.unshift(node_box[0])
+    l.push(node_box[1])
+    l.push(node_box[3])
+    l.print()
+
+    l.shift()
+    l.unshift(node_box[8])
+    l.pop()
+    l.push(node_box[5])
+    l.print()
+
+    l.unshift(node_box[3])
+    l.push(node_box[0])
+    l.print()
+
+    l.remove(node_box[0])
+    l.remove(node_box[1])
+    l.remove(node_box[7])
+    l.print()
+    
+    
+    
+    
+
+实现先进先出(FIFO)算法：先进的会从头部弹出，压入时会从尾部压入
+coding=utf-8
+
+from DoubleLinkedList import DoubleLinkedList,Node
+
+# 模拟FIFO缓存置换算法
+class FIFOCache:
+    def __init__(self,capacity,ram):    # capacity是链表中的容量，也是缓存中的容量，例如 capacity=10，表示缓存只能容纳10个空间，链表只能最多有10个节点
+        self.ram = ram  # 模拟主存，内含有多个空间，每个小空间放着一个key-value数据，ram有多个key，key是存储空间在主存中的地址，ram的值是node节点
+        self.map={}     # map模拟高速缓存,map有多个key，key是存储空间在缓存中的地址,map中的值是node节点,故map放的是地址和节点的映射，ram也是
+        self.size=0     # size是缓存中的空间个数
+        self.capacity=capacity  # 缓存空间的最大个数，也是双向链表的最大节点数
+        self.doubleLinkedList = DoubleLinkedList()  # 双向链表，用来记录map中数据空间的顺序，在map中的数据也一定会在双向链表中有对应节点
+
+    # 模拟CPU从高速缓存中获取数据
+    def get(self,key):  # 根据地址获取空间内的数据
+        key = str(key)
+        node = self.map.get(key,self.__getFromRam(key))  # CPU根据数据的地址从缓存中找这个数据，如果缓存中没有则从内存中找
+        if node:
+            return node.value
+        else:   # 该情况是当从主存中取数据，但主存也没有该数据的情况。CPU是不会犯这种错误的，人会
+            return False
+
+    def __getFromRam(self,key):
+        key=str(key)
+
+        # 如果主存中没有数据则返回False
+        if key not in self.ram:
+            return False
+
+        # 如果主存中有数据，则将数据写入缓存中，然后返回数据给CPU。这里分为两种情况：缓存还没写满和缓存写满了
+        node = self.ram.get(key)
+        self.put(node.key,node.value)
+
+        return node
+
+    # CPU或者主存将数据写入或者更新缓存
+    def put(self,key,value):
+        key = str(key)
+        newNode = Node(key,value)
+        if key in self.map: # 如果缓存中已有这个地址的数据，说明是更新
+            node = self.map[key]
+            self.doubleLinkedList.remove(node)
+            self.doubleLinkedList.push(newNode)
+            self.map[key]=newNode
+        else:   # 新增
+            if self.size==self.capacity:    # 如果缓存写满了,则进行先进先出置换
+                node = self.doubleLinkedList.shift()    # 获取弹出的节点，待会要从map中删除这个节点
+                # print(node.key)
+                del(self.map[node.key])
+                self.size-=1
+
+                # 将弹出来的节点写一份到内存中
+                if node.key not in self.ram:
+                    self.ram[node.key] = node
+
+            self.doubleLinkedList.push(newNode)
+            self.map[key]=newNode
+            self.size+=1
+
+    def print(self):
+        self.doubleLinkedList.print()
+        print(self.map)
+        print(self.ram)
+        print("\n")
+
+
+if __name__=="__main__":
+    ram={str(i):Node(key=i,value=i) for i in range(1,21)}    # 定义已占用的内存空间和每个内存空间的数据，key是地址，value是数据
+
+    # 假设一个缓存有3个空间
+    cache = FIFOCache(capacity=3,ram=ram)
+
+    # 在类外put的都是CPU写入缓存的数据，而在__getFromRam方法put的都是从主存置换到缓存的数据
+    cache.put(25,25)        # key大于20的都是内存中不存在的，说明是CPU运算产生的数据写入了缓存
+    cache.put(12,12)
+    cache.put(100,100)
+    cache.print()
+    cache.put(50,50)
+    cache.print()
+    print(cache.get(10))
+    print(cache.get(5))
+    print(cache.get(2))
+    print(cache.get(100))
+    cache.print()
+    
+    
+    
+实现LRU置换算法：最近被使用的节点（包括获取或者修改值）会移到头部，满了则从尾部弹出
+
+# coding=utf-8
+
+from DoubleLinkedList import DoubleLinkedList,Node
+
+class LRUCache:
+    def __init__(self,capacity,ram):
+        self.ram=ram    # 模拟内存，里面放的是Node节点
+        self.capacity = capacity
+        self.size=0
+        self.map={}     # 模拟缓存，里面放的是Node节点
+        self.dll=DoubleLinkedList()     # 双向链表
+
+    def get(self,key):
+        key = str(key)
+        node = self.map.get(key,self.__getFromRam(key))   # 缓存中有就从缓存取，否则从内存取
+        if node:
+            return node.value
+        else:
+            return False
+
+    def put(self,key,value):
+        key=str(key)
+        if key not in self.map:     # 缓存中没有这个空间的地址，则为新增
+            # 分两种情况，缓存满了和缓存没满
+            if self.size >= self.capacity:  # 满了
+                old_node=self.dll.pop()      # 从链表尾部弹出尾部节点
+                self.map.pop(old_node.key)   # 发生置换，从缓存中删除该旧节点
+                self.size-=1
+
+                # 从缓存链表中弹出的数据应该置换（写入）到主存中
+                self.ram[old_node.key]=old_node
+
+            # 没满则不作额外操作
+            node = Node(key,value)
+            self.map[key]=node
+            self.dll.unshift(node)
+            self.size+=1
+        else:   # 修改
+            self.dll.remove(self.map[key])  # 将该节点放到链表头部
+            self.dll.unshift(self.map[key])
+            self.map[key]=value     # 修改该节点的值
+
+
+
+
+    def __getFromRam(self,key):
+        key=str(key)
+        if key not in self.ram:
+            return False
+
+        node = self.ram[key]
+        self.put(key,node.value)
+
+
+    def print(self):
+        self.dll.print()
+        print(self.map)
+        print(self.ram)
+        print("\n")
+
+if __name__=="__main__":
+    ram = {str(i):Node(i,i) for i in range(1,21)}  # 定义内存
+    
+    # 定义缓存
+    cache=LRUCache(capacity=3,ram=ram)
+
+    # CPU往缓存中写入数据
+    cache.put(33,33)
+    cache.put(100,100)
+    cache.put(2,2)  # 主存置换到缓存的数据
+    cache.print()
+
+    cache.get(10)
+    cache.get(1000)
+    cache.put(4,6)  # 修改key为4的地址空间的数据值为6
+    cache.print()
+
+    cache.put(22,22)
+    cache.get(33)
+    cache.get(100)
+    cache.print()
+    
+
+
+实现LFU置换算法：
+该算法要维护一个表（表1），记录每一个空间节点的使用（包括获取或者使用）次数(频率)
+如果，当发生主存缓存置换的时候，会置换掉这个表中访问次数最少的节点
+但是如果有多个地址空间的访问次数一样而且他们都是访问最少的，我们就要置换掉最早访问的那个节点
+所以还要维护一个表（表2），这个表放着多个链表，每一个链表放着多个访问次数相同的空间节点。当节点的访问次数改变时，这个节点要从一个链表转移到另一个链表。
+当发生置换时，要从最少访问次数的链表中弹出头部节点（按照先进先出的算法）
+
+所以在表1是按照频率最少原则来置换，在链表中是按照先进先出原则来删除节点。
+
+# coding=utf-8
+
+from DoubleLinkedList import DoubleLinkedList,Node
+import random
+
+# 频率节点，这种节点处理记录空间地址key和数据value外，还记录着空间在缓存中的访问次数freq
+class FreqNode(Node):
+    def __init__(self,key,value):
+        self.freq=0
+        super(FreqNode,self).__init__(key,value)
+
+    def __str__(self):
+        return "{%s,%s,%s}" % (self.key,self.value,self.freq)
+
+    def __repr__(self):
+        return "{%s,%s,%s}" % (self.key,self.value,self.freq)
+
+
+class LFUCache:
+    def __init__(self,capacity,ram):
+        self.ram=ram
+        self.capacity=capacity
+        self.map={}     # 存放节点 FreqNode
+        self.size=0
+        self.dll_map={}     # 存放链表的字典，以访问次数为key
+
+    # 更新某个节点的访问次数
+    def __update_freq(self,node):
+        self.dll_map[node.freq].remove(node)
+        if self.dll_map[node.freq].size==0:
+            del self.dll_map[node.freq]
+
+        node.freq+=1
+
+        if node.freq not in self.dll_map:   # 如果某一个频率的链表不存在就建一个
+            self.dll_map[node.freq] = DoubleLinkedList()
+
+        self.dll_map[node.freq].push(node)      # 压到尾部
+
+    def __getFromRam(self,key):
+        if key not in self.ram:
+            return False
+
+        node = self.ram[key]
+        self.put(key,node.value)   # 进行主存内存置换
+
+        return node
+
+    def get(self,key):
+        key=str(key)
+
+        # 如果命中缓存
+        if key in self.map:
+            node = self.map[key]
+            self.__update_freq(node)    # 改变node的访问次数，做+1操作
+        else:   # 未命中缓存
+            node = self.__getFromRam(key)
+
+        if node:
+            return node.value
+        else:
+            return False
+
+    # CPU或者主存写入数据到高速缓存
+    def put(self,key,value):
+        key = str(key)
+
+        # 分为命中缓存和没有命中(命中缓存就是修改空间的数据,没命中就在缓存新开一块空间)
+        if key in self.map:
+            self.map[key].value=value
+            self.__update_freq(self.map[key])
+        else:
+            # 两种情况：缓存没满和缓存满了
+            if self.size==self.capacity:    # 存满了
+                # 先将访问最少的节点从链表和map中删掉
+                min_freq = min(self.dll_map)    # 获取最小的访问次数
+                old_node = self.dll_map[min_freq].shift()  # 从头部弹出
+                self.map.pop(old_node.key)
+
+                old_node.freq=0     # 该节点的访问数清零
+                self.ram[old_node.key]=old_node
+                self.size-=1
+
+            #  没存满
+            node = FreqNode(key,value)   # 在缓存中新开一个空间节点
+            self.map[key] = node
+            node.freq=1
+            self.size+=1
+
+            # 将新节点放到链表中
+            if node.freq not in self.dll_map:
+                self.dll_map[node.freq]=DoubleLinkedList()
+
+            self.dll_map[node.freq].push(node)
+
+    def print(self):
+        # 输出map和dll_map
+        print(self.map)
+        for k,dll in self.dll_map.items():
+            print("Freq:%d" % k)
+            print("DoubleLinkedList:")
+            dll.print()
+        print("\n")
+
+def randTest(cache,times=10):   # 默认进行50次操作
+    operate={"get":cache.get,"put":cache.put}
+    key1 = list(range(1,10))
+    key2 = list(range(1,6))
+    for i in range(times):
+        # print(operate.keys())
+        op_name = random.choice(list(operate.keys()))
+        op=operate[op_name]
+
+        if op_name=="get":
+            keyValue = random.choice(key2)
+            print("Do %s(%s)" % (op_name,str(keyValue)))
+            print(op(keyValue))
+        else:
+            keyValue = random.choice(key1)
+            print("Do %s(%s,%s)" % (op_name,str(keyValue),str(keyValue)))
+            op(keyValue,keyValue)
+
+
+
+if __name__=="__main__":
+    ram = {str(i):FreqNode(i,i) for i in range(1,6)}
+
+    cache = LFUCache(capacity=3,ram=ram)
+
+    # 随机插入和获取测试
+    randTest(cache)
+    # cache.get("5")
+    # cache.put("2","2")
+    # cache.get("1")
+    # cache.put("2","2")
+    # cache.put("6","6")
+    # cache.put("1","1")
+    cache.print()
+

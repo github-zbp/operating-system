@@ -5,7 +5,7 @@ import select, socket
 # 服务端代码，该代码不能再windows中运行，因为windows中没有epoll的系统调用
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind(("127.0.0.1", 8000))
+server.bind(("0.0.0.0", 8088))
 server.listen()
 server.setblocking(False)
 
@@ -32,12 +32,14 @@ while True:
 
     if not events:
         print("无事件就绪")
-        print(events)
     else:
         print("有 %s 个事件就绪" % len(events))
 
+    print(events)
+
     for fd, event in events:
         ready_socket = monitored_socket[fd]     # 根据fd获取就绪的socket对象
+        print("event", event)
 
         if ready_socket == server:      # 如果就绪fd是server，说明server可读事件就绪，表示有客户端连接
             client, addr = server.accept()     # 非阻塞，而且一定能接收到连接
@@ -53,7 +55,8 @@ while True:
             monitored_socket[client_fd] = client
             client_msg[client_fd] = []      # 保存该客户端的所有发送过来的消息
 
-        elif event == select.EPOLLHUP:      # 如果客户端关闭连接
+        elif event & select.EPOLLHUP:      # 如果客户端关闭连接
+
             ready_socket.close()
 
             epoll.unregister(fd)    # 不再监听该客户端的事件
@@ -64,9 +67,9 @@ while True:
 
             print("客户端 %s 关闭连接" % str(fd))
 
-        elif event == select.EPOLLIN:  # 如果客户端读事件就绪
+        elif event & select.EPOLLIN:  # 如果客户端读事件就绪
             msg = ready_socket.recv(1024)
-
+            print(msg)
             if msg:
                 print("接收到客户端 %s 的消息 %s" % (str(fd), msg.decode("utf-8")))
 
@@ -74,8 +77,18 @@ while True:
 
                 # 修改监听事件为写事件,因为客户端发送消息过来之后我想将消息马上原样发送回给客户端
                 epoll.modify(fd, select.EPOLLOUT)
+            else:   # 如果返回空字符说明客户端关闭socket断开连接
+                ready_socket.close()
 
-        elif event == select.EPOLLOUT: # 如果客户端写事件就绪，其实只要客户端的输入缓冲区没满应该就满足写事件就绪（所谓的客户端写事件就绪是客户端可以被写而不是可以去写）
+                epoll.unregister(fd)  # 不再监听该客户端的事件
+
+                del monitored_socket[fd]
+
+                del client_msg[fd]
+
+                print("客户端 %s 关闭连接" % str(fd))
+
+        elif event & select.EPOLLOUT: # 如果客户端写事件就绪，其实只要客户端的输入缓冲区没满应该就满足写事件就绪（所谓的客户端写事件就绪是客户端可以被写而不是可以去写）
             try:
                 msg = client_msg[fd].pop()
             except:
